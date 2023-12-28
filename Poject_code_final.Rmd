@@ -1,0 +1,402 @@
+---
+title: "Project_code"
+output: word_document
+---
+
+
+#“영화 데이터 분석 - 영화사는 어떤 영화를 만드는 게 유리한가”
+#0. 데이터 소개
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+movie = read.csv("C:/Users/Jiwon Kim/Documents/movie.csv", na.strings = c(""))
+colnames(movie)
+```
+
+#“ 영화사 입장에서 어떤 장르의 영화를 만드는 게 유리한가”
+#X: genre
+
+#(0) 전처리
+#genres변수: 하나의 obervation에 많은 값을 가지고 있음
+#genres를 기준으로 자료 재구성
+```{r}
+head(movie$genres)
+genres_temp = paste("genres", 1:6)
+movie_genres = movie %>% 
+  separate(genres, into = genres_temp, sep = "-") %>%
+  pivot_longer(genres_temp, names_to = "temp", values_to = "genres") %>%
+  select(-temp) %>%
+  filter(!is.na(genres))
+head(movie_genres)
+```
+
+
+#(1) budget~genre: 특정 장르에서 예산이 높게 나타나는 현상이 보이는가?
+```{r}
+theme = theme(axis.text.x = element_text(angle=45,hjust=1))+theme(plot.title = element_text(hjust=0.5))
+
+
+quantile(movie$budget)
+
+#전체 데이터의 genres분포
+movie_genres %>%
+  ggplot(aes(genres))+geom_bar()+theme+ylim(0, 14000) + ggtitle("Distribution of Genres")
+
+#filtering한 후 genres분포 확인
+movie_genres %>%
+  filter(budget>4000, budget<8500000) %>%
+  ggplot(aes(genres))+geom_bar()+theme+ylim(0, 14000) + ggtitle("Distribution of Genres after filtering")+xlab("Genres")
+
+movie_genres %>%
+  filter(budget>4000, budget<8500000) %>%
+  ggplot(aes(genres, budget))+geom_jitter(shape = ".")+geom_boxplot(width = 0.3)+theme+ ggtitle("Distribution of Genres")+labs(x = "Genres",y="Budget")
+
+movie_genres %>%
+  ggplot(aes((reorder(genres, -budget)), budget))+geom_bar(stat = "summary", fun.y = "mean") + theme + ggtitle("Relation between Genres and Budget")+labs(x = "Genres",y="Budget Mean")
+```
+
+
+#(2) revenue : 특정 장르에서 수익이 높게 나타나는 현상이 보이는가?
+```{r}
+quantile(movie$revenue)
+
+#손익분기점을 넘긴(성공한) 영화들의 revenue분포를 토대로 revenue를 범주화(revenue_level)
+movie_succeed = movie %>% 
+  filter(revenue>0)
+quantile(movie_succeed$revenue)
+
+
+movie_genres %>%
+  mutate(revenue_level = cut(revenue, breaks = c(-12, 0, 929967, 10248631, 52223306, 2920357254), labels = c("zero", "low", "mid", "high", "very high"))) %>%
+  ggplot(aes(genres, fill = revenue_level))+geom_bar(position = "fill")+theme+ggtitle("Revenue Proportion of Genres")+labs(x = "Genres",y = "Proportion of Revenue")
+```
+
+
+#(3) 어떤 장르가 가성비가 좋은가?
+#- 새로운 변수: 가성비 = revenue/budget
+```{r}
+#가성비 측정 도구로 effectiveness = revenue per budget 도입
+a = movie_genres %>%
+  mutate(revenue_per_budget = revenue/budget) %>%
+  filter(revenue_per_budget>0)
+quantile(a$revenue_per_budget)
+
+
+movie_genres %>%
+  mutate(effectiveness = revenue/budget) %>%
+  mutate(effectiveness_level = cut(effectiveness, breaks = c(-1, 3.000000e-08, 7.027382e-01, 1.794085e+00, 3.846154e+00, 2.755584e+06), labels = c("zero", "low", "mid", "high", "very high"))) %>%
+  ggplot(aes(genres, fill = effectiveness_level))+geom_bar(position = "fill")+theme+ggtitle("Proportion of effectiveness")+labs(y="Proportions of Effectiveness",x = "Genres")
+
+
+movie_genres %>%
+  mutate(effectiveness = revenue/budget) %>%
+  mutate(effectiveness_level = cut(effectiveness, breaks = c(-1, 3.000000e-08, 7.027382e-01, 1.794085e+00, 3.846154e+00, 2.755584e+06), labels = c("zero", "low", "mid", "high", "very high"))) %>%
+  ggplot()+geom_count(aes(genres,effectiveness_level)) + theme
+```
+
+
+#(4) score~genre: 특정 장르에서 평점이 높게 나타나는 현상이 보이는가?
+```{r}
+quantile(movie$popularity)
+
+#EDA
+movie_genres %>%
+  mutate(pop_rank = min_rank(popularity)) %>%
+  ggplot()+geom_point(aes(pop_rank,popularity),na.rm=TRUE)+xlim(63300,64000)+labs(x = "popularity ranking")
+
+movie_genres_160 = 
+  movie_genres %>%
+  mutate(pop_rank = row_number(popularity)) %>%
+  filter(pop_rank > 63300) %>%
+  group_by(genres) %>%
+  summarise(genres_n = n())
+movie_genres_160
+
+genres_n = 
+  movie_genres %>%
+  group_by(genres) %>%
+  summarise(n = n())
+genres_n
+
+movie_genres_160 %>%
+  right_join(genres_n) %>%
+  mutate(rate_160 = genres_n/n) %>%
+  ggplot()+geom_bar(aes((reorder(genres, -rate_160)), rate_160), stat = "identity")+theme + labs(x = "genres", y = "rate of high popularity",title = "Rate of High Popularity for Each Genres")
+```
+
+
+#(5) vote_average~genre: 특정 장르에서 vote_average이 높게 나타나는 현상이 보이는가?
+```{r}
+par(mfrow = c(1,2))
+movie_genres %>%
+  filter(vote_average >0) %>%
+  mutate(label = if_else(genres %in% c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy"), "A", "B")) %>%
+  filter(label == "A") %>%
+  ggplot()+geom_density(aes(vote_average, color = genres, fill = genres), alpha = 0.1)+labs(x = "vote average", title = "Vote Average between Each Genres") +theme(plot.title = element_text(hjust=0.5))
+
+movie_genres %>%
+  filter(vote_average >0) %>%
+  mutate(label = if_else(genres %in% c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy"), "A", "B")) %>%
+  filter(label == "B") %>%
+  ggplot()+geom_density(aes(vote_average, color = genres, fill = genres), alpha = 0.1)+labs(x = "vote average", title = "Vote Average between Each Genres") +theme(plot.title = element_text(hjust=0.5))
+
+movie_genres %>%
+  filter(vote_average > 0) %>%
+  group_by(genres) %>%
+  summarise(vote_mean = mean(vote_average)) %>%
+  ggplot()+geom_bar(aes(reorder(genres, -vote_mean), vote_mean), stat = "identity")+theme + labs(x = "genres", y = "vote mean", title = "Relationship between Vote Mean and Genres")
+
+```
+
+
+
+#“ 영화사 입장에서 언제 영화를 개봉하는 것이 유리한가”
+#(1) 어느 달에 revenue가 가장 높은가
+```{r}
+#revenue>0 filter 한 데이터가 movie_succeed
+movie_succeed$release_date = as.Date(movie_succeed$release_date)
+movie$release_date =as.Date(movie$release_date)
+
+movie_succeed %>%
+  group_by(month = as.integer(lubridate::month(release_date))) %>%
+  summarise(mean_revenue = mean(revenue)) %>% filter(!is.na(month)) %>%
+  ggplot()+geom_bar(aes(factor(month), mean_revenue), stat = "identity") + labs(y = "mean of revenue", title = "Relation between revenue mean and month")+theme(plot.title = element_text(hjust=0.5))+xlab("month")
+```
+
+
+#(2) 서브프라임 모기지 발 2008글로벌 금융위기, 코로나19 시기 영화산업 분석
+```{r}
+library(lubridate)
+#시장 규모
+movie_succeed %>%
+  ggplot(aes(release_date, revenue))+geom_point()+ggtitle("Change of Film Industry")+theme
+
+# 시장 규모는 점점 커지고 있음(시장규모=각 영화들의 revenue의 합) 
+movie_succeed %>%
+  group_by(year = lubridate::year(release_date)) %>%
+  summarise(sum_revenue = sum(revenue)) %>%
+  ggplot(aes(year, sum_revenue))+geom_bar(stat = "identity")+xlim(1960, 2025) + ggtitle("Chainging size of Film Industry")+labs(y = "sum of revenues")
+
+help(lead)
+
+#코로나19
+movie %>%
+  group_by(year = year(release_date), month = month(release_date)) %>%
+  summarise(sum_revenue = sum(revenue), sum_budget = sum(budget)) %>%
+  mutate(year_month = paste0(year, "-", month) %>% ym()) %>%
+  ggplot()+geom_line(aes(year_month, sum_revenue))+xlim(as.Date("2019-01-01"), as.Date("2022-12-31"))+ylim(0, 3.5e+09) + ggtitle("Film Industry over the years")+labs(x = "year", y = "sum of revenue") + theme(plot.title = element_text(hjust = 0.5))
+
+#코로나 시기의 영화들의 수익 비교
+movie %>%
+  filter(revenue > 0) %>%
+  ggplot(aes(release_date, revenue))+geom_jitter()+xlim(as.Date("2019-01-01"), as.Date("2022-12-31"))+ggtitle("Distribution of Revenue of Movies")+theme(plot.title = element_text(hjust = 0.5))
+
+#코로나 시기의 영화들의 성공 확률 비교
+total = movie %>%
+  group_by(year = year(release_date), month = month(release_date)) %>%
+  summarise(total = n())
+succeed = movie_succeed %>% 
+  group_by(year = year(release_date), month = month(release_date)) %>%
+  summarise(succeed = n())
+movie_n = total %>%
+  left_join(succeed)
+movie_n$succeed[is.na(movie_n$succeed)] = 0
+
+movie_n %>%
+  mutate(succeed_rate = succeed/total, year_month = paste0(year, "-", month) %>% ym()) %>%
+  filter(year >= 2019, year < 2023) %>%
+  ggplot(aes(year_month, succeed_rate))+geom_line(aes(color = year))+labs(x = "year", y = "rate of success", title = "Rate of success of movies over the years") + theme(plot.title = element_text(hjust = 0.5))
+
+
+#서브프라임모기지 - 2008글로벌 경제위기
+movie_succeed %>%
+  group_by(year = year(release_date), month = month(release_date)) %>%
+  summarise(sum_revenue = sum(revenue)) %>%
+  mutate(year_month = paste0(year, "-", month) %>% ym()) %>%
+  ggplot(aes(year_month, sum_revenue))+geom_line()+geom_smooth(method = "lm")+xlim(as.Date("2007-01-01"), as.Date("2010-12-31"))+ggtitle("Film Industry during 2008 Financial Crisis")+labs(x = "year", y = "sum of revenues") + theme(plot.title = element_text(hjust=0.5))
+
+
+#서브프라임 모기지 때, 성공한 영화 비율
+movie_n %>%
+  mutate(succeed_rate = succeed/total, year_month = paste0(year, "-", month) %>% ym()) %>%
+  filter(year > 2006, year < 2010) %>%
+  ggplot(aes(year_month, succeed_rate))+geom_line(aes(color = factor(year)))+ggtitle("Success Rate of Movies during 2008 Financial Crisis")+theme(plot.title = element_text(hjust=0.5))+labs(y = "rate of succeed films")
+```
+
+
+
+
+#“영화의 수익성에 미치는 배우의 영향력이 유의한가?”
+
+```{r}
+head(movie$credits)
+#배우들 이름 전처리
+credits_temp = c("a","b","c","d","e","f")
+movie_credits = movie %>% 
+  separate(credits, into=credits_temp, sep="-") %>% 
+  pivot_longer(credits_temp, names_to = "temp", values_to = "credits") %>%
+  select(-temp) %>%
+  filter(!is.na(credits), credits!="", revenue!=0)
+movie_credits
+
+#출연 빈도 높은 배우들 선정
+credits_top = movie_credits %>% 
+  group_by(credits) %>% 
+  summarise(n=n()) %>%
+  mutate(rank = min_rank(desc(n))) %>%
+  filter(rank <= 7) %>%
+  arrange(rank)
+credits_top = credits_top[-1,]
+#jean의 경우 동명 배우들의 출연 수가 모두 합산된 데이터이므로 삭제
+credits_top
+
+credits_selected = c(credits_top$credits)
+credits_selected
+movie_credits = movie_credits %>%
+  filter(credits %in% credits_selected)
+movie_credits
+
+#출연 빈도 높은 배우와 그렇지 않은 배우의 평균수익 비교
+movie_credits2 = movie %>%
+  separate(credits, into=credits_temp, sep="-") %>% 
+  pivot_longer(credits_temp, names_to = "temp", values_to = "credits") %>%
+  select(-temp) %>%
+  filter(!is.na(credits), credits!="", revenue!=0) %>%
+  mutate(pop=ifelse(credits%in%credits_selected, "popular", "unpopular"))
+movie_credits2
+
+tapply(movie_credits2$revenue, movie_credits2$pop, mean)
+pop=c("popular", "unpopular")
+revenue_mean=c(134520609,65933213)
+movie_credits3 = tibble(pop,revenue_mean)
+movie_credits3
+ggplot(movie_credits3, aes(pop, revenue_mean))+geom_bar(stat = 'identity')
+
+#출연 빈도 높은 배우에 대해 배우별 평균 수익 확인
+movie_credits %>%
+  ggplot(aes(credits, revenue)) + geom_bar(stat = "summary", fun = "mean") + geom_hline(yintercept=movie_credits3$revenue_mean[pop=="unpopular"])
+
+#출연빈도 높은 배우에 대해 배우별 작품과 수익 그래프 확인
+rev_exp0 = movie %>% filter(revenue > 0)
+movie_credits %>% 
+  filter(credits == credits_selected[1]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Robert De Niro")
+
+rev_exp0 = movie %>% filter(revenue > 0) 
+movie_credits %>% 
+  filter(credits == credits_selected[2]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Nicolas Cage")
+
+rev_exp0 = movie %>% filter(revenue > 0) 
+movie_credits %>% 
+  filter(credits == credits_selected[3]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Samuel L. Jackson")
+
+rev_exp0 = movie %>% filter(revenue > 0) 
+movie_credits %>% 
+  filter(credits == credits_selected[4]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Bruce Willis")
+
+rev_exp0 = movie %>% filter(revenue > 0) 
+movie_credits %>% 
+  filter(credits == credits_selected[5]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Morgan Freeman")
+
+rev_exp0 = movie %>% filter(revenue > 0) 
+movie_credits %>% 
+  filter(credits == credits_selected[6]) %>%
+  ggplot(aes(title, revenue)) + geom_bar(stat = "summary", y.fun = "mean") + geom_hline(yintercept=mean(rev_exp0$revenue))+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+ggtitle("Tom Hanks")
+
+```
+
+
+
+#"그렇다면, 영화사 입장에서 어떤 배우를 기용해야 할까?"
+```{r}
+#예산 대비 수익이 높은 영화의 메인 배우를 내림차순 정렬
+movie_effective = movie_credits %>%
+  filter(original_language == "en") %>%
+  group_by(credits) %>%
+  filter(n() > 1) %>%
+  summarise(mean_revenue = mean(revenue),
+            mean_budget = mean(budget),
+            effectiveness = mean(revenue/budget)) %>%
+  arrange(desc(effectiveness))
+movie_effective
+
+#배우 별로 참여한 영화의 평균 수익과 평균 비용 그래프 확인
+movie_credits %>%
+  ggplot(aes(budget,revenue)) + geom_point(aes(color=credits), size=0.7) + geom_smooth(aes(color=credits), method = "lm", linewidth=0.7, alpha=0.2) + geom_smooth(method = "lm", linewidth=1, se=FALSE)
+
+```
+
+
+
+#“영화의 주된 언어가 영화의 흥행에 영향을 미치는가?”
+#(1)영화들이 어떤 언어로 가장 많이 제작되는가
+```{r}
+movie %>% 
+  count(original_language) %>% 
+  arrange(desc(n)) %>% 
+  head(n=5)
+```
+
+
+#(2)  영어로 된 영화가 가장 큰 수익을 만드는 게 맞는가? 
+```{r}
+language_revenue = movie %>% group_by(original_language) %>% summarise(revenue_mean = mean(revenue,na.rm = TRUE)) %>% ungroup()
+
+language_revenue %>%
+  mutate(rank = rank(-revenue_mean)) %>%
+  filter(rank <= 4 | original_language=="ko")%>% filter(original_language != "af") %>% 
+  ggplot() + geom_bar(aes(reorder(original_language, -revenue_mean), revenue_mean), stat = "identity")+labs(x = "original language", y = "mean of revenue", title = "Relation between original language and revenue") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+#(3) 영어로 만든 영화와 한국어로 만든 영화 비교
+```{r}
+## n
+movie %>%  mutate(date = as.Date(movie$release_date)) %>%  filter(original_language %in% c("en","ko")) %>% filter(!is.na(date)) %>% group_by(original_language, date) %>% summarise(n = n()) %>% ungroup() %>% 
+ggplot(aes(date, n)) + geom_line(aes(color=original_language)) + xlim(as.Date(c("1962-12-13", "2022-11-16")))+facet_wrap(~original_language) + ggtitle("Comparison of numbers between English and Korean Movies")+theme(plot.title = element_text(hjust=0.3))
+
+## popularity
+movie %>%  mutate(date = as.Date(movie$release_date)) %>% filter(original_language == "en" | original_language == "ko")%>% group_by(original_language)  %>% ungroup() %>% ggplot(aes(date,popularity)) + geom_line(aes(color=original_language))+ xlim(as.Date(c("1995-01-01", "2022-11-16")))+
+facet_wrap(~original_language)+ylim(0,2000)+ggtitle("Compairson of Popularity between English and Korean Movies")+theme(plot.title = element_text(hjust=0.3))
+
+## vote_average
+movie %>%  mutate(date = as.Date(movie$release_date)) %>% filter(original_language == "en" | original_language == "ko") %>% separate(date, into=c("year","month","day")) %>% filter(!is.na(date)) %>% group_by(original_language, year) %>% summarise(year_average = mean(vote_average)) %>% ungroup() %>%
+ggplot(aes(x = as.Date(paste(year,"01", "01", sep = "-")), y =  year_average)) + geom_line(aes(color=original_language)) +facet_wrap(~original_language) + xlim(as.Date(c("1995-01-01", "2022-11-16")))+labs(y = "average of votes", title = "Comparison of vote average between English and Korean Movies") + theme(plot.title = element_text(hjust=0.3)) +xlab("date")+geom_smooth(aes(group=original_language),method = "lm", se=FALSE)
+
+## revenue
+movie %>%  mutate(date = as.Date(movie$release_date)) %>% filter(original_language == "en" | original_language == "ko") %>%group_by(original_language)  %>% ungroup() %>%
+ggplot(aes(date, revenue)) + geom_line(aes(color=original_language)) + xlim(as.Date(c("1995-01-01", "2022-11-16")))+facet_wrap(~original_language)+ggtitle("Compairson of Revenue between English and Korean Movies")+theme(plot.title = element_text(hjust=0.3))
+
+## budget
+movie %>%  mutate(date = as.Date(movie$release_date)) %>% filter(original_language == "en" | original_language == "ko") %>% separate(date, into=c("year","month","day")) %>% filter(!is.na(date)) %>% 
+  filter(budget>4000, budget<8500000)%>%
+  group_by(original_language, year) %>% summarise(year_average = mean(budget))  %>% ungroup() %>%
+ggplot(aes(x = as.Date(paste(year,"01", "01", sep = "-")), y =  year_average)) + geom_line(aes(color=original_language)) + xlim(as.Date(c("1995-01-01", "2022-11-16")))+facet_wrap(~original_language,scale="free_y")+ggtitle("Compairson of Budget between English and Korean Movies")+theme(plot.title = element_text(hjust=0.3))+labs(x = "date", y = "yearly average budget")+geom_smooth(aes(group=original_language),method = "lm",se=FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
