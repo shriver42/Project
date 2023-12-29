@@ -12,7 +12,7 @@ library(tidyverse)
 library(dplyr)
 library(ggplot2)
 
-movie = read.csv("C:/Users/Seohyun Kang/Documents/movie.csv", na.strings = c(""))
+movie = read.csv("movie.csv", na.strings = c(""))
 colnames(movie)
 ```
 
